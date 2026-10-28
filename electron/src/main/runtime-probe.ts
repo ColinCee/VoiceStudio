@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { runtimeLaunchRefusal } from './runtime-launch-refusal';
 
 export const WINDOWS_ROCM_IMPORT_TIMEOUT_MS = 180_000;
 export interface RuntimeProbeOptions {
@@ -40,13 +41,20 @@ export function runRuntimeProbe(
 ): Promise<string> {
   options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let child: ChildProcess;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      // Windows throws a refused launch here instead of emitting `error`.
+      reject(runtimeLaunchRefusal(command, error) ?? error);
+      return;
+    }
     let failure: Error | undefined;
     let stdout = '';
     const stop = (error: Error) => {
