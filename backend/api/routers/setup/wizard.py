@@ -666,7 +666,20 @@ def preflight():
         # PyTorch next to a current driver was told to update a driver that
         # already qualified. No "torch_build": PyTorch did not import.
         build = gpu.get("torch_build")
-        if build in ("cpu", "rocm") and gpu.get("driver_meets_floor"):
+        if not gpu.get("driver_meets_floor"):
+            gpu_fix = (
+                f"Update NVIDIA drivers to ≥ R{'.'.join(map(str, _min_nvidia_driver()))} "
+                "(https://www.nvidia.com/Download/index.aspx). Or run CPU-only "
+                "by continuing past this step. CPU inference is slower; GPU-only "
+                "engines remain unavailable."
+            )
+        elif build is None:
+            gpu_fix = (
+                "The driver meets the minimum, but PyTorch could not be loaded to "
+                "check the GPU. Run setup again to repair the runtime (from "
+                "source: bun run setup:api), or continue on CPU (slower)."
+            )
+        elif build in ("cpu", "rocm"):
             gpu_detail = gpu_detail.rstrip() + (
                 " This install has the "
                 + ("CPU-only" if build == "cpu" else "ROCm")
@@ -677,13 +690,6 @@ def preflight():
                 "and restart VoiceStudio (from source: run bun run setup:api "
                 "again) to install the CUDA build of PyTorch, or continue on CPU "
                 "(slower)."
-            )
-        elif build != "cuda" or not gpu.get("driver_meets_floor"):
-            gpu_fix = (
-                f"Update NVIDIA drivers to ≥ R{'.'.join(map(str, _min_nvidia_driver()))} "
-                "(https://www.nvidia.com/Download/index.aspx). Or run CPU-only "
-                "by continuing past this step. CPU inference is slower; GPU-only "
-                "engines remain unavailable."
             )
         else:
             gpu_fix = (

@@ -364,7 +364,10 @@ def _nvidia_info(**extra):
     # An unreadable driver version was never checked: never claim it qualifies.
     (_nvidia_info(torch_build="cuda", driver="N/A", driver_meets_floor=False),
      "Update NVIDIA drivers", "meets the minimum"),
-    # PyTorch did not import: the build is unknown, so the advice is unchanged.
+    # PyTorch did not import and the driver qualifies: repair, never "update".
+    (_nvidia_info(driver_meets_floor=True), "PyTorch could not be loaded",
+     "Update NVIDIA drivers"),
+    # PyTorch did not import and the driver was not checked: driver advice stays.
     (_nvidia_info(), "Update NVIDIA drivers", "OMNIVOICE_TORCH_VARIANT"),
 ])
 def test_preflight_nvidia_advice_matches_the_cause(monkeypatch, tmp_path, info, says, never):
@@ -382,7 +385,8 @@ def test_preflight_names_the_rocm_build_on_an_nvidia_host(monkeypatch, tmp_path)
     assert "CPU-only" not in check["detail"]
 
 
-def test_detect_gpu_records_the_cpu_only_build_next_to_a_current_driver(monkeypatch):
+@pytest.mark.parametrize("hip, build", [(None, "cpu"), ("6.1", "rocm")])
+def test_detect_gpu_records_the_build_next_to_a_current_driver(monkeypatch, hip, build):
     import platform as _p
     if sys.platform == "darwin" and _p.machine() == "arm64":
         pytest.skip("apple-silicon branch returns before nvidia-smi")
@@ -395,14 +399,14 @@ def test_detect_gpu_records_the_cpu_only_build_next_to_a_current_driver(monkeypa
         lambda args, timeout=2.0: (0, "610.88, NVIDIA GeForce RTX 4090\n")
         if args and args[0] == "nvidia-smi" else (-1, ""),
     )
-    cpu_torch = SimpleNamespace(
+    torch_mod = SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: False),
-        version=SimpleNamespace(hip=None, cuda=None),
+        version=SimpleNamespace(hip=hip, cuda=None),
     )
-    with patch.dict("sys.modules", {"torch": cpu_torch}):
+    with patch.dict("sys.modules", {"torch": torch_mod}):
         info = setup_mod._detect_gpu()
 
-    assert info["torch_build"] == "cpu"
+    assert info["torch_build"] == build
     assert info["driver_meets_floor"] is True
 
 
