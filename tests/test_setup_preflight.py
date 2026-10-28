@@ -341,6 +341,55 @@ def _gpu_check(monkeypatch, tmp_path, info):
     return next(c for c in wizard.preflight()["checks"] if c["id"] == "gpu")
 
 
+def _nvidia_info(**extra):
+    return {
+        "vendor": "nvidia", "driver": "610.88", "device_name": "NVIDIA GeForce RTX 4090",
+        "backend": "cpu", "available": False, "notes": [], **extra,
+    }
+
+
+@pytest.mark.parametrize("info, says, never", [
+    # CPU-only PyTorch next to a current driver: the old advice said update it.
+    (_nvidia_info(torch_cuda=None), "OMNIVOICE_TORCH_VARIANT=cuda", "Update NVIDIA drivers"),
+    # CUDA build and a current driver that still cannot reach the GPU.
+    (_nvidia_info(torch_cuda="12.8"), "meets the minimum", "Update NVIDIA drivers"),
+    # A driver below the floor keeps the driver advice, whatever the build.
+    (_nvidia_info(torch_cuda=None, driver="520.61", driver_below_floor=True),
+     "Update NVIDIA drivers", "OMNIVOICE_TORCH_VARIANT"),
+    # PyTorch did not import: the build is unknown, so the advice is unchanged.
+    (_nvidia_info(), "Update NVIDIA drivers", "OMNIVOICE_TORCH_VARIANT"),
+])
+def test_preflight_nvidia_advice_matches_the_cause(monkeypatch, tmp_path, info, says, never):
+    check = _gpu_check(monkeypatch, tmp_path, info)
+    assert check["status"] == "warn"
+    assert says in check["fix"]
+    assert never not in check["fix"]
+
+
+def test_detect_gpu_records_the_cpu_only_build_next_to_a_current_driver(monkeypatch):
+    import platform as _p
+    if sys.platform == "darwin" and _p.machine() == "arm64":
+        pytest.skip("apple-silicon branch returns before nvidia-smi")
+    from types import SimpleNamespace
+
+    from api.routers.setup import wizard as setup_mod
+
+    monkeypatch.setattr(
+        setup_mod, "_run_cmd",
+        lambda args, timeout=2.0: (0, "610.88, NVIDIA GeForce RTX 4090\n")
+        if args and args[0] == "nvidia-smi" else (-1, ""),
+    )
+    cpu_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        version=SimpleNamespace(hip=None, cuda=None),
+    )
+    with patch.dict("sys.modules", {"torch": cpu_torch}):
+        info = setup_mod._detect_gpu()
+
+    assert info["torch_cuda"] is None
+    assert not info.get("driver_below_floor")
+
+
 def _radeon_preflight(monkeypatch, platform_, torch_mod):
     from api.routers.setup import wizard as setup_mod
     from core import gpu_inventory
