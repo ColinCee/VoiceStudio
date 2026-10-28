@@ -46,6 +46,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
+  vi.mocked(spawn).mockReset();
+  vi.mocked(installRuntime).mockReset();
   if (originalResources) Object.defineProperty(process, 'resourcesPath', originalResources);
   else delete (process as { resourcesPath?: string }).resourcesPath;
   await rm(host.data, { recursive: true, force: true });
@@ -233,21 +235,25 @@ it('preserves refusal of the selected default when there is no healthy alternati
 
 const uv = String.raw`C:\rt\uv.exe`;
 
-function refuseSpawn() {
+function refuseSpawn(code = 'UNKNOWN') {
   vi.mocked(spawn).mockImplementation((() => {
-    throw Object.assign(new Error('spawn UNKNOWN'), { code: 'UNKNOWN', syscall: 'spawn' });
+    throw Object.assign(new Error(`spawn ${code}`), { code, syscall: 'spawn' });
   }) as never);
 }
 
-it('rejects a timed probe whose launch Windows refuses with the program named', async () => {
-  refuseSpawn();
-  const probe = runRuntimeProbe(uv, ['sync'], String.raw`C:\rt`, {}, { timeoutMs: 1000 });
-  await expect(probe).rejects.toMatchObject({
-    name: 'RuntimeLaunchRefusedError',
-    program: uv,
-    message: 'spawn UNKNOWN',
-  });
-});
+it.each(['UNKNOWN', 'EPERM'])(
+  'rejects a timed probe whose launch Windows refuses (%s) with the program and code',
+  async (code) => {
+    refuseSpawn(code);
+    const probe = runRuntimeProbe(uv, ['sync'], String.raw`C:\rt`, {}, { timeoutMs: 1000 });
+    await expect(probe).rejects.toMatchObject({
+      name: 'RuntimeLaunchRefusedError',
+      program: uv,
+      message: `spawn ${code}`,
+      code,
+    });
+  },
+);
 
 it.each([
   ['an untimed', undefined],

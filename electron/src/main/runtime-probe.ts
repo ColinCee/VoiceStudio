@@ -52,7 +52,11 @@ export function runRuntimeProbe(
       });
     } catch (error) {
       // Windows throws a refused launch here instead of emitting `error`.
-      reject(runtimeLaunchRefusal(command, error) ?? error);
+      // Keep the OS code: setup maps EACCES/EPERM to its access hint.
+      const refusal = runtimeLaunchRefusal(command, error);
+      reject(
+        refusal ? Object.assign(refusal, { code: (error as NodeJS.ErrnoException).code }) : error,
+      );
       return;
     }
     let failure: Error | undefined;
