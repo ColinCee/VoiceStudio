@@ -222,8 +222,13 @@ def _detect_gpu() -> dict:
         info.update({"vendor": "nvidia", "driver": driver, "device_name": name})
         try:
             import torch
-            # None on the CPU-only build: then no driver update can help.
-            info["torch_cuda"] = getattr(torch.version, "cuda", None)
+            # Which build is installed decides the advice: no driver update
+            # helps a CPU or ROCm build drive an NVIDIA card.
+            info["torch_build"] = (
+                "cuda" if getattr(torch.version, "cuda", None)
+                else "rocm" if getattr(torch.version, "hip", None)
+                else "cpu"
+            )
             info["available"] = bool(torch.cuda.is_available())
             info["backend"] = "cuda" if info["available"] else "cpu"
             # The wheel may have no kernels for this card (sm_52 on cu128,
@@ -240,6 +245,7 @@ def _detect_gpu() -> dict:
         try:
             floor = _min_nvidia_driver()  # per host OS
             parsed = _driver_tuple(driver)
+            info["driver_meets_floor"] = parsed is not None and parsed >= floor
             if parsed is not None and parsed < floor:
                 info["notes"].append(
                     f"NVIDIA driver {driver} below "
@@ -248,7 +254,6 @@ def _detect_gpu() -> dict:
                     f"kernels. Update drivers before dubbing."
                 )
                 info["available"] = False
-                info["driver_below_floor"] = True
         except Exception:
             pass
         return info
@@ -657,22 +662,28 @@ def preflight():
             f"{gpu['device_name']} found but CUDA not usable "
             f"(driver {gpu['driver']}). " + " ".join(gpu["notes"])
         )
-        # Only an old driver gets driver advice: a CPU-only PyTorch build next to
-        # a current driver was told to update a driver that already qualified.
-        # No "torch_cuda" key: PyTorch did not import, so the build is unknown.
-        if gpu.get("driver_below_floor") or "torch_cuda" not in gpu:
+        # Driver advice only when the driver is too old or unreadable: a CPU-only
+        # PyTorch next to a current driver was told to update a driver that
+        # already qualified. No "torch_build": PyTorch did not import.
+        build = gpu.get("torch_build")
+        if build in ("cpu", "rocm") and gpu.get("driver_meets_floor"):
+            gpu_detail = gpu_detail.rstrip() + (
+                " This install has the "
+                + ("CPU-only" if build == "cpu" else "ROCm")
+                + " build of PyTorch."
+            )
+            gpu_fix = (
+                "A driver update will not help. Set OMNIVOICE_TORCH_VARIANT=cuda "
+                "and restart VoiceStudio (from source: run bun run setup:api "
+                "again) to install the CUDA build of PyTorch, or continue on CPU "
+                "(slower)."
+            )
+        elif build != "cuda" or not gpu.get("driver_meets_floor"):
             gpu_fix = (
                 f"Update NVIDIA drivers to ≥ R{'.'.join(map(str, _min_nvidia_driver()))} "
                 "(https://www.nvidia.com/Download/index.aspx). Or run CPU-only "
                 "by continuing past this step. CPU inference is slower; GPU-only "
                 "engines remain unavailable."
-            )
-        elif gpu["torch_cuda"] is None:
-            gpu_detail += " This install has the CPU-only build of PyTorch."
-            gpu_fix = (
-                "A driver update will not help. Set OMNIVOICE_TORCH_VARIANT=cuda "
-                "and run setup again to install the CUDA build of PyTorch, or "
-                "continue on CPU (slower)."
             )
         else:
             gpu_fix = (

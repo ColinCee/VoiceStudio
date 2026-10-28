@@ -350,12 +350,20 @@ def _nvidia_info(**extra):
 
 @pytest.mark.parametrize("info, says, never", [
     # CPU-only PyTorch next to a current driver: the old advice said update it.
-    (_nvidia_info(torch_cuda=None), "OMNIVOICE_TORCH_VARIANT=cuda", "Update NVIDIA drivers"),
+    (_nvidia_info(torch_build="cpu", driver_meets_floor=True),
+     "OMNIVOICE_TORCH_VARIANT=cuda", "Update NVIDIA drivers"),
+    # A ROCm build cannot drive an NVIDIA card either.
+    (_nvidia_info(torch_build="rocm", driver_meets_floor=True),
+     "OMNIVOICE_TORCH_VARIANT=cuda", "Update NVIDIA drivers"),
     # CUDA build and a current driver that still cannot reach the GPU.
-    (_nvidia_info(torch_cuda="12.8"), "meets the minimum", "Update NVIDIA drivers"),
+    (_nvidia_info(torch_build="cuda", driver_meets_floor=True),
+     "meets the minimum", "Update NVIDIA drivers"),
     # A driver below the floor keeps the driver advice, whatever the build.
-    (_nvidia_info(torch_cuda=None, driver="520.61", driver_below_floor=True),
+    (_nvidia_info(torch_build="cpu", driver="520.61", driver_meets_floor=False),
      "Update NVIDIA drivers", "OMNIVOICE_TORCH_VARIANT"),
+    # An unreadable driver version was never checked: never claim it qualifies.
+    (_nvidia_info(torch_build="cuda", driver="N/A", driver_meets_floor=False),
+     "Update NVIDIA drivers", "meets the minimum"),
     # PyTorch did not import: the build is unknown, so the advice is unchanged.
     (_nvidia_info(), "Update NVIDIA drivers", "OMNIVOICE_TORCH_VARIANT"),
 ])
@@ -364,6 +372,14 @@ def test_preflight_nvidia_advice_matches_the_cause(monkeypatch, tmp_path, info, 
     assert check["status"] == "warn"
     assert says in check["fix"]
     assert never not in check["fix"]
+
+
+def test_preflight_names_the_rocm_build_on_an_nvidia_host(monkeypatch, tmp_path):
+    check = _gpu_check(
+        monkeypatch, tmp_path, _nvidia_info(torch_build="rocm", driver_meets_floor=True)
+    )
+    assert "ROCm build of PyTorch" in check["detail"]
+    assert "CPU-only" not in check["detail"]
 
 
 def test_detect_gpu_records_the_cpu_only_build_next_to_a_current_driver(monkeypatch):
@@ -386,8 +402,8 @@ def test_detect_gpu_records_the_cpu_only_build_next_to_a_current_driver(monkeypa
     with patch.dict("sys.modules", {"torch": cpu_torch}):
         info = setup_mod._detect_gpu()
 
-    assert info["torch_cuda"] is None
-    assert not info.get("driver_below_floor")
+    assert info["torch_build"] == "cpu"
+    assert info["driver_meets_floor"] is True
 
 
 def _radeon_preflight(monkeypatch, platform_, torch_mod):
