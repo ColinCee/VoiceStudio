@@ -400,13 +400,15 @@ def test_detect_gpu_records_the_build_next_to_a_current_driver(monkeypatch, hip,
         if args and args[0] == "nvidia-smi" else (-1, ""),
     )
     torch_mod = SimpleNamespace(
-        cuda=SimpleNamespace(is_available=lambda: False),
+        # True as a ROCm build reports for a second, AMD card.
+        cuda=SimpleNamespace(is_available=lambda: True),
         version=SimpleNamespace(hip=hip, cuda=None),
     )
     with patch.dict("sys.modules", {"torch": torch_mod}):
         info = setup_mod._detect_gpu()
 
     assert info["torch_build"] == build
+    assert info["available"] is False
     assert info["driver_meets_floor"] is True
 
 

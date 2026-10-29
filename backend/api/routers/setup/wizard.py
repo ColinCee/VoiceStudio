@@ -229,7 +229,11 @@ def _detect_gpu() -> dict:
                 else "rocm" if getattr(torch.version, "hip", None)
                 else "cpu"
             )
-            info["available"] = bool(torch.cuda.is_available())
+            # A ROCm build also answers is_available() for a second, AMD card;
+            # only a CUDA build drives this one.
+            info["available"] = (
+                info["torch_build"] == "cuda" and bool(torch.cuda.is_available())
+            )
             info["backend"] = "cuda" if info["available"] else "cpu"
             # The wheel may have no kernels for this card (sm_52 on cu128,
             # #3067): the loader then runs on CPU, so "CUDA ready" would
